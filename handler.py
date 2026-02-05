@@ -14,17 +14,21 @@ import urllib.request
 from transformers import pipeline
 
 
-# Load model at cold start (cached for warm starts)
-def load_model():
-    return pipeline(
-        "automatic-speech-recognition",
-        model="kotoba-tech/kotoba-whisper-v2.0",
-        torch_dtype=torch.float16,
-        device="cuda",
-    )
+# Global model cache
+MODEL = None
 
 
-MODEL = load_model()
+def get_model():
+    """Load model lazily on first request."""
+    global MODEL
+    if MODEL is None:
+        MODEL = pipeline(
+            "automatic-speech-recognition",
+            model="kotoba-tech/kotoba-whisper-v2.0",
+            torch_dtype=torch.float16,
+            device="cuda",
+        )
+    return MODEL
 
 # Pattern to detect YouTube URLs
 YOUTUBE_PATTERN = re.compile(
@@ -56,7 +60,8 @@ def download_youtube_audio(url: str, output_path: str) -> dict:
 
 def transcribe(audio_path, return_timestamps=True, chunk_length_s=30, batch_size=16):
     """Run transcription with chunking for long audio."""
-    result = MODEL(
+    model = get_model()
+    result = model(
         audio_path,
         chunk_length_s=chunk_length_s,
         batch_size=batch_size,
