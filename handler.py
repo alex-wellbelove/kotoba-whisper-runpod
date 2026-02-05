@@ -1,6 +1,13 @@
 """
-RunPod Serverless Handler for Kotoba-Whisper v2.0
+RunPod Serverless Handler for Kotoba-Whisper v2.1
 Japanese transcription optimized for gaming/YouTube content
+
+Changes from v2.0:
+- Updated to kotoba-whisper-v2.1 (better punctuation/timestamps via stable-ts)
+- Use bfloat16 instead of float16 (recommended by HuggingFace)
+- Added SDPA attention implementation for speed
+- Default to sequential long-form mode (more accurate, no chunk_length_s)
+- Optional chunked mode with chunk_length_s=15 (faster, use mode="fast")
 """
 
 import runpod
@@ -24,11 +31,13 @@ def get_model():
     if MODEL is None:
         MODEL = pipeline(
             "automatic-speech-recognition",
-            model="kotoba-tech/kotoba-whisper-v2.0",
-            torch_dtype=torch.float16,
+            model="kotoba-tech/kotoba-whisper-v2.1",
+            torch_dtype=torch.bfloat16,
             device="cuda",
+            model_kwargs={"attn_implementation": "sdpa"},
         )
     return MODEL
+
 
 # Pattern to detect YouTube URLs
 YOUTUBE_PATTERN = re.compile(
@@ -58,16 +67,45 @@ def download_youtube_audio(url: str, output_path: str) -> dict:
     return metadata
 
 
-def transcribe(audio_path, return_timestamps=True, chunk_length_s=30, batch_size=16):
-    """Run transcription with chunking for long audio."""
+def transcribe(audio_path, return_timestamps=True, mode="accurate", batch_size=16):
+    """
+    Run transcription on audio file.
+    
+    Args:
+        audio_path: Path to audio file
+        return_timestamps: Whether to return word/chunk timestamps
+        mode: "accurate" (sequential, slower) or "fast" (chunked, faster)
+        batch_size: Batch size for chunked mode
+    
+    Notes:
+        - "accurate" mode: Uses sequential long-form algorithm (no chunking)
+          Better for transcription quality, recommended for most cases.
+        - "fast" mode: Uses chunked algorithm with 15s chunks
+          Up to 9x faster but may have slight accuracy loss at chunk boundaries.
+    """
     model = get_model()
-    result = model(
-        audio_path,
-        chunk_length_s=chunk_length_s,
-        batch_size=batch_size,
-        return_timestamps=return_timestamps,
-        generate_kwargs={"language": "ja", "task": "transcribe"},
-    )
+    
+    generate_kwargs = {"language": "ja", "task": "transcribe"}
+    
+    if mode == "fast":
+        # Chunked mode: faster but experimental
+        # chunk_length_s=15 is optimal for distil-whisper architecture
+        result = model(
+            audio_path,
+            chunk_length_s=15,
+            batch_size=batch_size,
+            return_timestamps=return_timestamps,
+            generate_kwargs=generate_kwargs,
+        )
+    else:
+        # Sequential mode: more accurate (default)
+        # No chunk_length_s = uses Whisper's native long-form algorithm
+        result = model(
+            audio_path,
+            return_timestamps=return_timestamps,
+            generate_kwargs=generate_kwargs,
+        )
+    
     return result
 
 
@@ -82,15 +120,23 @@ def handler(job):
 
     Optional params:
         - return_timestamps: bool (default: True)
-        - chunk_length_s: int (default: 30)
-        - batch_size: int (default: 16)
+        - mode: "accurate" or "fast" (default: "accurate")
+        - batch_size: int (default: 16, only used in fast mode)
+    
+    Deprecated params (for backwards compatibility):
+        - chunk_length_s: If provided, enables fast mode
     """
     job_input = job["input"]
 
     # Get optional params
     return_timestamps = job_input.get("return_timestamps", True)
-    chunk_length_s = job_input.get("chunk_length_s", 30)
     batch_size = job_input.get("batch_size", 16)
+    
+    # Mode selection: explicit mode param, or infer from chunk_length_s
+    mode = job_input.get("mode", "accurate")
+    if "chunk_length_s" in job_input:
+        # Backwards compatibility: if chunk_length_s is provided, use fast mode
+        mode = "fast"
 
     metadata = None
 
@@ -124,13 +170,14 @@ def handler(job):
         result = transcribe(
             audio_path,
             return_timestamps=return_timestamps,
-            chunk_length_s=chunk_length_s,
+            mode=mode,
             batch_size=batch_size,
         )
 
     output = {
         "text": result["text"],
         "chunks": result.get("chunks", []),
+        "mode": mode,
     }
 
     # Include video metadata if available
