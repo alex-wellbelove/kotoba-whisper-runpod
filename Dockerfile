@@ -12,9 +12,6 @@ RUN pip install --no-cache-dir \
     ffmpeg-python \
     yt-dlp
 
-# Install flash attention for faster inference
-RUN pip install flash-attn --no-build-isolation
-
 # Pre-download the model during build (faster cold starts)
 RUN python -c "from transformers import pipeline; pipeline('automatic-speech-recognition', model='kotoba-tech/kotoba-whisper-v2.0')"
 
