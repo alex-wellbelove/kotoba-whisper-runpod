@@ -13,7 +13,9 @@ RUN pip install --no-cache-dir \
     torch \
     torchaudio \
     ffmpeg-python \
-    yt-dlp
+    yt-dlp \
+    huggingface_hub --upgrade \
+    filelock --upgrade
 
 # Copy handler
 COPY handler.py /app/handler.py
