@@ -51,6 +51,11 @@ def is_youtube_url(url: str) -> bool:
 
 def download_youtube_audio(url: str, output_path: str) -> dict:
     """Download audio from YouTube using yt-dlp. Returns video metadata."""
+    import json
+    
+    # Update yt-dlp first (YouTube changes frequently)
+    subprocess.run(["pip", "install", "-U", "yt-dlp"], capture_output=True)
+    
     cmd = [
         "yt-dlp",
         "-x",  # Extract audio
@@ -61,8 +66,11 @@ def download_youtube_audio(url: str, output_path: str) -> dict:
         "--no-playlist",  # Single video only
         url,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    import json
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    
+    if result.returncode != 0:
+        raise RuntimeError(f"yt-dlp failed: {result.stderr}")
+    
     metadata = json.loads(result.stdout.strip().split('\n')[-1])
     return metadata
 
