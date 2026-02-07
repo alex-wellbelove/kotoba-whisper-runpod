@@ -23,19 +23,38 @@ from transformers import pipeline
 
 # Global model cache
 MODEL = None
+CURRENT_MODEL_NAME = None
+
+# Available models
+MODELS = {
+    "kotoba": "kotoba-tech/kotoba-whisper-v2.1",
+    "large-v3": "openai/whisper-large-v3",
+    "large-v2": "openai/whisper-large-v2",
+}
+DEFAULT_MODEL = "kotoba"
 
 
-def get_model():
-    """Load model lazily on first request."""
-    global MODEL
-    if MODEL is None:
+def get_model(model_name: str = None):
+    """Load model lazily on first request. Supports model switching."""
+    global MODEL, CURRENT_MODEL_NAME
+    
+    model_name = model_name or DEFAULT_MODEL
+    model_id = MODELS.get(model_name, model_name)  # Allow direct HF model IDs too
+    
+    if MODEL is None or CURRENT_MODEL_NAME != model_id:
+        # Clear old model from GPU memory
+        if MODEL is not None:
+            del MODEL
+            torch.cuda.empty_cache()
+        
         MODEL = pipeline(
             "automatic-speech-recognition",
-            model="kotoba-tech/kotoba-whisper-v2.1",
+            model=model_id,
             torch_dtype=torch.bfloat16,
             device="cuda",
             model_kwargs={"attn_implementation": "sdpa"},
         )
+        CURRENT_MODEL_NAME = model_id
     return MODEL
 
 
@@ -75,7 +94,7 @@ def download_youtube_audio(url: str, output_path: str) -> dict:
     return metadata
 
 
-def transcribe(audio_path, return_timestamps=True, mode="accurate", batch_size=16):
+def transcribe(audio_path, return_timestamps=True, mode="accurate", batch_size=16, model_name=None):
     """
     Run transcription on audio file.
     
@@ -84,6 +103,7 @@ def transcribe(audio_path, return_timestamps=True, mode="accurate", batch_size=1
         return_timestamps: Whether to return word/chunk timestamps
         mode: "accurate" (sequential, slower) or "fast" (chunked, faster)
         batch_size: Batch size for chunked mode
+        model_name: Model to use ("kotoba", "large-v3", "large-v2", or HF model ID)
     
     Notes:
         - "accurate" mode: Uses sequential long-form algorithm (no chunking)
@@ -91,7 +111,7 @@ def transcribe(audio_path, return_timestamps=True, mode="accurate", batch_size=1
         - "fast" mode: Uses chunked algorithm with 15s chunks
           Up to 9x faster but may have slight accuracy loss at chunk boundaries.
     """
-    model = get_model()
+    model = get_model(model_name)
     
     generate_kwargs = {"language": "ja", "task": "transcribe"}
     
@@ -130,6 +150,7 @@ def handler(job):
         - return_timestamps: bool (default: True)
         - mode: "accurate" or "fast" (default: "accurate")
         - batch_size: int (default: 16, only used in fast mode)
+        - model: "kotoba", "large-v3", "large-v2", or HF model ID (default: "kotoba")
     
     Deprecated params (for backwards compatibility):
         - chunk_length_s: If provided, enables fast mode
@@ -139,6 +160,7 @@ def handler(job):
     # Get optional params
     return_timestamps = job_input.get("return_timestamps", True)
     batch_size = job_input.get("batch_size", 16)
+    model_name = job_input.get("model", DEFAULT_MODEL)
     
     # Mode selection: explicit mode param, or infer from chunk_length_s
     mode = job_input.get("mode", "accurate")
@@ -180,12 +202,14 @@ def handler(job):
             return_timestamps=return_timestamps,
             mode=mode,
             batch_size=batch_size,
+            model_name=model_name,
         )
 
     output = {
         "text": result["text"],
         "chunks": result.get("chunks", []),
         "mode": mode,
+        "model": model_name,
     }
 
     # Include video metadata if available

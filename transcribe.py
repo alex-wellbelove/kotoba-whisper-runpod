@@ -47,7 +47,7 @@ def get_config():
     return endpoint_id, api_key
 
 
-def submit_job_file(audio_path: str, endpoint_id: str, api_key: str, mode: str = "fast") -> str:
+def submit_job_file(audio_path: str, endpoint_id: str, api_key: str, mode: str = "fast", model: str = "kotoba") -> str:
     """Submit transcription job with local file."""
     with open(audio_path, "rb") as f:
         audio_base64 = base64.b64encode(f.read()).decode()
@@ -60,6 +60,7 @@ def submit_job_file(audio_path: str, endpoint_id: str, api_key: str, mode: str =
                 "audio_base64": audio_base64,
                 "return_timestamps": True,
                 "mode": mode,
+                "model": model,
             }
         },
     )
@@ -67,11 +68,12 @@ def submit_job_file(audio_path: str, endpoint_id: str, api_key: str, mode: str =
     return response.json()["id"]
 
 
-def submit_job_url(url: str, endpoint_id: str, api_key: str, mode: str = "fast") -> str:
+def submit_job_url(url: str, endpoint_id: str, api_key: str, mode: str = "fast", model: str = "kotoba") -> str:
     """Submit transcription job with URL (YouTube or direct audio)."""
     input_data = {
         "return_timestamps": True,
         "mode": mode,
+        "model": model,
     }
 
     if is_youtube_url(url):
@@ -161,19 +163,25 @@ Examples:
         default="fast",
         help="Transcription mode: 'fast' (chunked, GPU batching) or 'accurate' (sequential). Default: fast",
     )
+    parser.add_argument(
+        "--model",
+        choices=["kotoba", "large-v3", "large-v2"],
+        default="kotoba",
+        help="Model: 'kotoba' (Japanese-optimized), 'large-v3', 'large-v2' (OpenAI Whisper). Default: kotoba",
+    )
     args = parser.parse_args()
 
     endpoint_id, api_key = get_config()
 
     if is_url(args.input):
-        print(f"Submitting URL: {args.input} (mode={args.mode})", file=sys.stderr)
-        job_id = submit_job_url(args.input, endpoint_id, api_key, mode=args.mode)
+        print(f"Submitting URL: {args.input} (mode={args.mode}, model={args.model})", file=sys.stderr)
+        job_id = submit_job_url(args.input, endpoint_id, api_key, mode=args.mode, model=args.model)
     else:
         if not os.path.exists(args.input):
             print(f"Error: File not found: {args.input}", file=sys.stderr)
             sys.exit(1)
-        print(f"Submitting file: {args.input} (mode={args.mode})", file=sys.stderr)
-        job_id = submit_job_file(args.input, endpoint_id, api_key, mode=args.mode)
+        print(f"Submitting file: {args.input} (mode={args.mode}, model={args.model})", file=sys.stderr)
+        job_id = submit_job_file(args.input, endpoint_id, api_key, mode=args.mode, model=args.model)
 
     print(f"Job ID: {job_id}", file=sys.stderr)
 
