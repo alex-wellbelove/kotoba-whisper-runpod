@@ -20,4 +20,9 @@ RUN pip install --no-cache-dir \
 # Copy handler
 COPY handler.py /app/handler.py
 
+# Pre-download models during build (avoids runtime disk space issues)
+RUN python -c "from transformers import pipeline; \
+    pipeline('automatic-speech-recognition', 'kotoba-tech/kotoba-whisper-v2.1'); \
+    pipeline('automatic-speech-recognition', 'openai/whisper-large-v3')"
+
 CMD ["python", "-u", "/app/handler.py"]
